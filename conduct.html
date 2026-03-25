@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Ultimate Conductor Maestro - Fixed 6/8</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body { margin: 0; background: #050505; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: white; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        #canvas-container { position: relative; border-radius: 20px; overflow: hidden; box-shadow: 0 0 40px rgba(0,212,255,0.1); }
+        .controls { margin-top: 15px; display: flex; flex-direction: column; align-items: center; gap: 12px; width: 95%; max-width: 700px; z-index: 10; }
+        .btn-group { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+        button { padding: 6px 12px; cursor: pointer; border: none; border-radius: 6px; background: #1a1a1a; color: #00d4ff; font-weight: bold; border: 1px solid #00d4ff; font-size: 11px; transition: 0.2s; }
+        button:hover { background: #00d4ff; color: black; }
+        button.active { background: #00d4ff; color: black; box-shadow: 0 0 10px #00d4ff; }
+        button.preset { border-color: #ff9f43; color: #ff9f43; }
+        button.preset:hover { background: #ff9f43; color: black; }
+        button.stop { background: #ee5253; color: white; border-color: #ee5253; }
+        .panel { background: rgba(255,255,255,0.05); padding: 10px 20px; border-radius: 15px; display: flex; align-items: center; gap: 20px; border: 1px solid rgba(255,255,255,0.1); }
+        .switch-label { font-size: 10px; color: #888; margin-bottom: 4px; display: block; text-align: center; }
+        input[type=range] { width: 120px; }
+        #bpm-display { font-family: monospace; font-size: 18px; color: #00d4ff; width: 70px; text-align: center; }
+        #beat-text { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); font-size: 80px; font-weight: 900; color: rgba(255,255,255,0.05); pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <div id="beat-text">1</div>
+    </div>
+    
+    <div class="controls">
+        <div class="panel">
+            <div>
+                <span class="switch-label">TEMPO</span>
+                <div style="display:flex; align-items:center;">
+                    <input type="range" id="bpm-slider" min="40" max="220" value="100" oninput="updateBPM()">
+                    <span id="bpm-display">100</span>
+                </div>
+            </div>
+            <div>
+                <span class="switch-label">SUBDIVISION (Triplets/8th)</span>
+                <input type="checkbox" id="sub-divide" style="transform: scale(1.5);">
+            </div>
+        </div>
+
+        <div class="btn-group">
+            <button onclick="changeBeat('2/4')">2/4</button>
+            <button onclick="changeBeat('3/4')">3/4</button>
+            <button onclick="changeBeat('4/4')">4/4</button>
+            <button onclick="changeBeat('2/2')">2/2</button>
+            <button onclick="changeBeat('5/4')">5/4</button>
+            <button onclick="changeBeat('6/8')">6/8</button>
+            <button onclick="changeBeat('7/8')">7/8</button>
+            <button onclick="changeBeat('9/8')">9/8</button>
+            <button onclick="changeBeat('12/8')">12/8</button>
+        </div>
+
+<div class="btn-group">
+    <button class="preset" onclick="setPreset('Fate', '2/4', 108)">運命 (Beethoven)</button>
+    <button class="preset" onclick="setPreset('Swan', '3/4', 72)">白鳥の湖 (Tchaikovsky)</button>
+    <button class="preset" onclick="setPreset('Ode to Joy', '4/4', 120)">歓喜の歌 (Beethoven)</button>
+    <button class="preset" onclick="setPreset('Nocturne', '12/8', 44)">ノクターン Op.9-2 (Chopin)</button>
+    <button class="preset" onclick="setPreset('Fantaisie', '2/2', 84)">幻想即興曲 (Chopin)</button>
+    <button class="preset" onclick="setPreset('Bolero', '3/4', 72)">ボレロ (Ravel)</button>
+    <button class="stop" onclick="stopConductor()">STOP</button>
+</div>    </div>
+
+    <script>
+        let isMoving = false;
+        let t = 0;
+        let currentBeatIndex = 0;
+        let synth, subSynth;
+        let currentPoints = [];
+        let currentMode = "";
+        let bpm = 100;
+        let flashAlpha = 0;
+        // Subdivision管理用のフラグ
+        let subTriggers = []; 
+
+        const beatPatterns = {
+            '2/4': [{x: 0, y: 150}, {x: 0, y: -150}],
+            '3/4': [{x: 0, y: 150}, {x: 160, y: 60}, {x: 0, y: -150}],
+            '4/4': [{x: 0, y: 150}, {x: -140, y: 0}, {x: 120, y: 0}, {x: 0, y: -150}],
+            '2/2': [{x: 0, y: 160}, {x: 0, y: -160}],
+            '5/4': [{x: 0, y: 150}, {x: -80, y: 30}, {x: 80, y: 30}, {x: 160, y: -20}, {x: 0, y: -150}],
+            '6/8': [{x: -120, y: 120}, {x: 120, y: -120}],
+            '7/8': [{x: 0, y: 150}, {x: -120, y: 20}, {x: 120, y: 20}, {x: 0, y: -150}],
+            '9/8': [{x: 0, y: 150}, {x: 160, y: 60}, {x: 0, y: -150}],
+            '12/8': [{x: 0, y: 150}, {x: -140, y: 0}, {x: 120, y: 0}, {x: 0, y: -150}]
+        };
+
+        function setup() {
+            const canvas = createCanvas(600, 380);
+            canvas.parent('canvas-container');
+            synth = new Tone.MembraneSynth({ volume: 0 }).toDestination();
+            subSynth = new Tone.MetalSynth({ volume: -25, envelope: { decay: 0.01 } }).toDestination();
+        }
+
+        function draw() {
+            background(10, 10, 15);
+            if (flashAlpha > 0) {
+                fill(0, 212, 255, flashAlpha);
+                rect(0, 0, width, height);
+                flashAlpha -= 10;
+            }
+            
+            translate(width / 2, height / 2);
+
+            if (isMoving && currentPoints.length > 0) {
+                let step = (bpm / 60) / 60; 
+                t += step;
+
+                // Subdivision（細分化）の数学的ロジック
+                if (document.getElementById('sub-divide').checked) {
+                    checkSubdivision();
+                }
+
+                if (t >= 1) {
+                    t = 0;
+                    resetSubTriggers();
+                    currentBeatIndex = (currentBeatIndex + 1) % currentPoints.length;
+                    
+                    if (currentBeatIndex === 0) {
+                        synth.triggerAttackRelease("C2", "16n");
+                        flashAlpha = 50;
+                    } else {
+                        synth.triggerAttackRelease("G1", "16n");
+                    }
+                    document.getElementById('beat-text').innerText = currentBeatIndex + 1;
+                }
+
+                let p1 = currentPoints[currentBeatIndex];
+                let p2 = currentPoints[(currentBeatIndex + 1) % currentPoints.length];
+                let easedT = t * t * (3 - 2 * t);
+                let ballX = lerp(p1.x, p2.x, easedT);
+                let ballY = lerp(p1.y, p2.y, easedT);
+
+                noFill(); stroke(255, 15); strokeWeight(2);
+                beginShape();
+                currentPoints.forEach(p => curveVertex(p.x, p.y));
+                endShape(CLOSE);
+
+                noStroke();
+                for(let i=3; i>0; i--) {
+                    fill(0, 212, 255, 30 / i);
+                    ellipse(ballX, ballY, 10 + i*15, 10 + i*15);
+                }
+                fill(255); ellipse(ballX, ballY, 12, 12);
+            }
+        }
+
+        function checkSubdivision() {
+            // 6/8, 9/8, 12/8 の場合は3連符（1/3, 2/3地点）で鳴らす
+            let isCompound = ['6/8', '9/8', '12/8'].includes(currentMode);
+            let targets = isCompound ? [1/3, 2/3] : [0.5];
+
+            targets.forEach((target, idx) => {
+                if (t >= target && !subTriggers[idx]) {
+                    subSynth.triggerAttackRelease("C6", "32n");
+                    subTriggers[idx] = true;
+                }
+            });
+        }
+
+        function resetSubTriggers() {
+            subTriggers = [false, false];
+        }
+
+        function updateBPM() {
+            bpm = document.getElementById('bpm-slider').value;
+            document.getElementById('bpm-display').innerText = bpm;
+        }
+
+        function changeBeat(mode) {
+            Tone.start();
+            currentMode = mode;
+            currentPoints = beatPatterns[mode];
+            currentBeatIndex = 0;
+            t = 0;
+            isMoving = true;
+            resetSubTriggers();
+            
+            document.querySelectorAll('button').forEach(btn => {
+                btn.classList.remove('active');
+                if(btn.innerText === mode) btn.classList.add('active');
+            });
+        }
+
+        function setPreset(name, beat, presetBpm) {
+            document.getElementById('bpm-slider').value = presetBpm;
+            updateBPM();
+            changeBeat(beat);
+        }
+
+        function stopConductor() {
+            isMoving = false;
+            flashAlpha = 0;
+            document.getElementById('beat-text').innerText = "1";
+            document.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+        }
+    </script>
+</body>
+</html>

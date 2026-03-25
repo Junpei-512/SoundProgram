@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Geometric Sequencer Pro</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body { margin: 0; background: #050505; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Courier New', monospace; }
+        #ui { position: absolute; top: 25px; left: 25px; color: #00d4ff; pointer-events: none; }
+        #controls { position: absolute; bottom: 25px; left: 25px; color: rgba(255,255,255,0.5); font-size: 12px; }
+        canvas { box-shadow: 0 0 100px rgba(0,212,255,0.1); }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h2 style="margin: 0; letter-spacing: 3px;">POLYRHYTHM LAB</h2>
+        <div id="status">Click to Start & Add Shapes</div>
+        <div id="bpm-display">BPM: --</div>
+    </div>
+    <div id="controls">
+        MOUSE X: Change BPM | EVEN ID: Reverse Rotation | PRESS 'S': Save Frame
+    </div>
+
+    <script>
+        let polySynth;
+        let masterAngle = 0;
+        let shapes = [];
+        let nextN = 3;
+        const maxN = 15; // 15角形まで拡張
+        const scale = ["C3", "D3", "E3", "G3", "A3", "C4", "D4", "E4", "G4", "A4", "C5", "D5", "E5"];
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            
+            // 音響系：深いリバーブとディレイで宇宙的な広がりに
+            const delay = new Tone.FeedbackDelay("8n", 0.5).toDestination();
+            const reverb = new Tone.Reverb(3).connect(delay);
+            
+            polySynth = new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: "triangle" },
+                envelope: { attack: 0.02, decay: 0.2, sustain: 0.2, release: 1.5 }
+            }).connect(reverb);
+        }
+
+        function draw() {
+            // マウス位置でBPMを計算 (10 ~ 120 BPM)
+            let targetBPM = map(constrain(mouseX, 0, width), 0, width, 10, 120);
+            document.getElementById('bpm-display').innerText = `BPM: ${floor(targetBPM)}`;
+
+            // 背景を薄く塗りつぶして残像を作る
+            background(5, 5, 10, 25); 
+            translate(width / 2, height / 2);
+
+            // 全体の回転角をBPMに基づいて更新
+            let speed = (TWO_PI * targetBPM / 60) / 60;
+            masterAngle += speed;
+
+            // 各シェイプの描画
+            shapes.forEach((s, i) => {
+                // 偶数番目は逆回転させるための係数
+                let direction = (i % 2 === 0) ? 1 : -1;
+                let currentAngle = masterAngle * direction;
+                
+                drawShape(s, currentAngle);
+                processAudio(s, currentAngle);
+            });
+        }
+
+        function drawShape(s, ang) {
+            push();
+            noFill();
+            strokeWeight(map(s.n, 3, maxN, 2, 0.5)); // 外側ほど線を細く
+            
+            // 多角形の描画
+            stroke(red(s.color), green(s.color), blue(s.color), 80);
+            beginShape();
+            for (let i = 0; i < s.n; i++) {
+                let a = (TWO_PI / s.n) * i - HALF_PI;
+                vertex(s.r * cos(a), s.r * sin(a));
+            }
+            endShape(CLOSE);
+
+            // 回転する点
+            let px = s.r * cos(ang - HALF_PI);
+            let py = s.r * sin(ang - HALF_PI);
+            
+            // 発光エフェクト
+            if (s.flash > 0) {
+                fill(255, s.flash);
+                noStroke();
+                ellipse(px, py, 20, 20);
+                s.flash -= 10;
+            }
+
+            fill(s.color);
+            noStroke();
+            ellipse(px, py, 10, 10);
+            pop();
+        }
+
+        function processAudio(s, ang) {
+            // 頂点ヒット判定 (Modulo math)
+            let normalizedAngle = (ang - HALF_PI) % (TWO_PI / s.n);
+            if (abs(normalizedAngle) < 0.04 && !s.isHit) {
+                polySynth.triggerAttackRelease(s.note, "16n");
+                s.isHit = true;
+                s.flash = 255;
+            } else if (abs(normalizedAngle) > 0.1) {
+                s.isHit = false;
+            }
+        }
+
+        function mousePressed() {
+            if (Tone.state !== 'started') Tone.start();
+            
+            if (nextN <= maxN) {
+                shapes.push({
+                    n: nextN,
+                    r: 60 + (nextN - 3) * 30,
+                    note: scale[(nextN - 3) % scale.length],
+                    color: color(`hsl(${floor(map(nextN, 3, maxN, 180, 360))}, 80%, 60%)`),
+                    isHit: false,
+                    flash: 0
+                });
+                document.getElementById('status').innerText = `Added: ${nextN}-gon`;
+                nextN++;
+            } else {
+                shapes = [];
+                nextN = 3;
+                document.getElementById('status').innerText = "Reset All Shapes";
+            }
+        }
+
+        function keyPressed() {
+            // 'S'キーでスクリーンショット保存
+            if (key === 's' || key === 'S') {
+                saveCanvas('geometric_polyrhythm', 'png');
+            }
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+    </script>
+</body>
+</html>

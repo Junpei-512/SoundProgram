@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Piano Math: Advanced Theory Lab</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #121212; color: #e0e0e0; margin: 0; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        #score { background: white; border-radius: 12px; margin-bottom: 15px; display: inline-block; padding: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        #display-area { display: flex; justify-content: space-around; margin: 20px 0; background: #1e1e1e; padding: 20px; border-radius: 12px; border: 1px solid #333; }
+        .info-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .info-value { font-size: 26px; color: #00d4ff; font-weight: bold; }
+        #piano { display: flex; justify-content: flex-start; height: 160px; overflow-x: auto; background: #000; padding: 15px; border-radius: 15px; border: 4px solid #333; }
+        .key { width: 30px; height: 130px; border: 1px solid #111; background: #fff; cursor: pointer; flex-shrink: 0; position: relative; border-radius: 0 0 5px 5px; color: #333; font-size: 9px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 5px; box-sizing: border-box; transition: 0.1s; }
+        .key.black { width: 22px; height: 85px; background: #222; margin: 0 -11px; z-index: 2; border-radius: 0 0 3px 3px; color: #aaa; font-size: 8px; border: 1px solid #000; }
+        .key.active { background: #00d4ff !important; transform: translateY(2px); box-shadow: inset 0 0 10px rgba(0,0,0,0.5); }
+        button { background: #d32f2f; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="score"></div>
+
+        <div id="display-area">
+            <div class="info-box">
+                <div class="info-label">Current Chord</div>
+                <div id="chord-name" class="info-value">-</div>
+            </div>
+            <div class="info-box">
+                <div class="info-label">Matching Scales</div>
+                <div id="scale-name" class="info-value" style="font-size: 18px;">-</div>
+            </div>
+        </div>
+
+        <div id="piano"></div>
+        <button onclick="clearSelection()">RESET</button>
+    </div>
+
+    <script>
+        const { Renderer, Stave, StaveNote, Formatter, Accidental } = Vex.Flow;
+        
+        // 1. 音楽理論データ
+        const sharpNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        const flatNames = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+        
+        // 単音の時の「ご指定の呼び名」ルール
+        const soloNoteNames = {
+            0: "C",  1: "C#", 2: "D",  3: "Eb", 4: "E", 
+            5: "F",  6: "F#", 7: "G",  8: "Ab", 9: "A", 
+            10: "Bb", 11: "B"
+        };
+
+        // スケール判定でフラット系として扱うルート音 (Eb, Ab, Bbなど)
+        const preferFlats = [3, 8, 10]; 
+
+        const chordPatterns = { "4,7":"Maj", "3,7":"min", "4,7,10":"7", "4,7,11":"Maj7", "3,7,10":"m7" };
+        const scalePatterns = [
+            { name: "Major", intervals: [0, 2, 4, 5, 7, 9, 11] },
+            { name: "Minor", intervals: [0, 2, 3, 5, 7, 8, 10] }
+        ];
+
+        // 2. 音源のセットアップ
+        const sampler = new Tone.Sampler({
+            urls: { A2: "A2.mp3", A4: "A4.mp3", C2: "C2.mp3", C4: "C4.mp3", C6: "C6.mp3" },
+            baseUrl: "https://tonejs.github.io/audio/salamander/",
+        }).toDestination();
+
+        let selectedNotes = [];
+
+        // 3. 鍵盤生成 (C2 to C6)
+        const pianoEl = document.getElementById('piano');
+        for (let midi = 36; midi <= 84; midi++) {
+            const noteIdx = midi % 12;
+            const octave = Math.floor(midi / 12) - 1;
+            const isBlack = sharpNames[noteIdx].includes('#');
+            const key = document.createElement('div');
+            key.className = `key ${isBlack ? 'black' : ''}`;
+            
+            const label = isBlack ? `${sharpNames[noteIdx]}<br>${flatNames[noteIdx]}` : sharpNames[noteIdx];
+            key.innerHTML = `<span>${label}${octave}</span>`;
+            
+            key.addEventListener('mousedown', () => toggleNote(midi, key));
+            pianoEl.appendChild(key);
+        }
+
+        async function toggleNote(midi, el) {
+            await Tone.start();
+            if (selectedNotes.includes(midi)) {
+                selectedNotes = selectedNotes.filter(n => n !== midi);
+                el.classList.remove('active');
+            } else if (selectedNotes.length < 6) {
+                selectedNotes.push(midi);
+                el.classList.add('active');
+                sampler.triggerAttackRelease(Tone.Frequency(midi, "midi"), "2n");
+            }
+            updateApp();
+        }
+
+        function updateApp() {
+            const analysis = analyzeMusic();
+            renderScore(analysis.useFlats);
+        }
+
+        // 4. 解析ロジック (和音・スケール・フラット判定)
+        function analyzeMusic() {
+            if (selectedNotes.length === 0) {
+                document.getElementById('chord-name').innerText = "-";
+                document.getElementById('scale-name').innerText = "-";
+                return { useFlats: false };
+            }
+
+            const normalized = [...new Set(selectedNotes.map(n => n % 12))].sort((a, b) => a - b);
+            
+            // スケール判定
+            let matches = [];
+            for (let root = 0; root < 12; root++) {
+                scalePatterns.forEach(p => {
+                    const scaleSet = p.intervals.map(i => (root + i) % 12);
+                    if (normalized.every(n => scaleSet.includes(n))) {
+                        const name = preferFlats.includes(root) ? flatNames[root] : sharpNames[root];
+                        matches.push(`${name} ${p.name}`);
+                    }
+                });
+            }
+            document.getElementById('scale-name').innerText = matches.slice(0, 2).join(", ") || "None";
+
+            // 全体の表示モード決定
+            let useFlats = false;
+            if (selectedNotes.length >= 3) {
+                // 3音以上の和音ならスケールの結果を優先
+                useFlats = matches.length > 0 && matches[0].includes('b');
+            } else if (selectedNotes.length === 1) {
+                // 単音の時は、その音が Bb, Eb, Ab ならフラット表示モードにする
+                useFlats = [3, 8, 10].includes(selectedNotes[0] % 12);
+            }
+
+            const nameSet = useFlats ? flatNames : sharpNames;
+
+            // コード判定
+            let foundChord = "Unknown";
+            for (let root of normalized) {
+                const intervals = normalized.map(n => (n - root + 12) % 12).filter(d => d !== 0).sort((a, b) => a - b);
+                if (chordPatterns[intervals.join(',')]) {
+                    foundChord = nameSet[root] + " " + chordPatterns[intervals.join(',')];
+                    break;
+                }
+            }
+            document.getElementById('chord-name').innerText = foundChord;
+            
+            return { useFlats };
+        }
+
+        // 5. 楽譜描画ロジック
+        function renderScore(useFlats) {
+            const div = document.getElementById("score");
+            div.innerHTML = "";
+            if (selectedNotes.length === 0) return;
+
+            const renderer = new Renderer(div, Renderer.Backends.SVG);
+            renderer.resize(320, 150);
+            const context = renderer.getContext();
+            const stave = new Stave(10, 10, 300);
+            stave.addClef("treble").setContext(context).draw();
+
+            const sorted = [...selectedNotes].sort((a, b) => a - b);
+            
+            const chordKeys = sorted.map(midi => {
+                const octave = Math.floor(midi / 12) - 1;
+                let noteName = "";
+
+                if (selectedNotes.length <= 1) {
+                    // 単音の時は指定のルールを適用
+                    noteName = soloNoteNames[midi % 12];
+                } else {
+                    // 和音の時は全体のモード（スケール由来）に従う
+                    noteName = useFlats ? flatNames[midi % 12] : sharpNames[midi % 12];
+                }
+                
+                const vexNote = noteName.toLowerCase().replace('#', 's').replace('b', 'b');
+                return `${vexNote}/${octave}`;
+            });
+
+            const chordNote = new StaveNote({ keys: chordKeys, duration: "q" });
+            chordKeys.forEach((k, i) => {
+                if (k.includes('s')) chordNote.addModifier(new Accidental("#"), i);
+                if (k.includes('b')) chordNote.addModifier(new Accidental("b"), i);
+            });
+            
+            Formatter.FormatAndDraw(context, stave, [chordNote]);
+        }
+
+        function clearSelection() {
+            selectedNotes = [];
+            document.querySelectorAll('.key').forEach(k => k.classList.remove('active'));
+            updateApp();
+        }
+    </script>
+</body>
+</html>
